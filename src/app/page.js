@@ -57,47 +57,65 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
 
+    const myHandle = user.mailboxAddress?.toLowerCase() || "";
+
+    // 1. INBOX STREAM (Delivered incoming letters)
     const inboxQuery = query(
       collection(db, "letters"),
-      where("recipientId", "==", user.uid),
-      where("status", "==", "pending"),
-      orderBy("deliveryDate", "desc")
+      where("status", "==", "pending")
     );
 
     const unsubscribeInbox = onSnapshot(inboxQuery, (snapshot) => {
       const now = new Date();
+      
       const deliveredLetters = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .filter(letter => {
+          const isMeRecipient = letter.recipientId === user.uid || (letter.recipientAddress?.toLowerCase() === myHandle);
+          if (!isMeRecipient) return false;
+
           const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : new Date(letter.deliveryDate);
           return dDate <= now;
+        })
+        .sort((a, b) => {
+          const parseTime = (f) => f?.toDate ? f.toDate().getTime() : new Date(f).getTime() || 0;
+          return parseTime(b.deliveryDate) - parseTime(a.deliveryDate);
         });
       
       setInbox(deliveredLetters);
     }, (err) => console.error("Inbox sync failed:", err));
 
-    const archiveQuery = query(collection(db, "letters"));
 
-    const unsubscribeArchive = onSnapshot(archiveQuery, (snapshot) => {
+    // 2. CORRESPONDENCE LEDGER (Scoped separate queries combined locally to obey security keys)
+    let sentRecords = [];
+    let receivedRecords = [];
+
+    const combineAndSortLedger = () => {
       const now = new Date();
-      const records = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
+      const combined = [...sentRecords, ...receivedRecords];
+      
+      // Deduplicate overlapping records cleanly
+      const uniqueMap = new Map();
+      combined.forEach(item => uniqueMap.set(item.id, item));
+      
+      const cleanRecords = Array.from(uniqueMap.values())
         .filter(letter => {
           const isDraft = letter.status === "draft";
-          const isInvitePending = letter.senderId === user.uid && letter.recipientEmail && letter.status === "pending";
-          const isSentByMe = letter.senderId === user.uid && !isDraft && !isInvitePending;
+          const amISender = letter.senderId === user.uid || (letter.senderAddress?.toLowerCase() === myHandle);
+          const amIRecipient = letter.recipientId === user.uid || (letter.recipientAddress?.toLowerCase() === myHandle);
+
+          const isInvitePending = amISender && letter.recipientEmail && letter.status === "pending";
+          const isSentByMe = amISender && !isDraft && !isInvitePending;
           
           const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
-          const isSavedIt = letter.recipientId === user.uid && dDate && dDate <= now && letter.status === "archived";
+          const isSavedIt = amIRecipient && dDate && dDate <= now && letter.status === "archived";
 
           return isSentByMe || isDraft || isInvitePending || isSavedIt;
         })
         .sort((a, b) => {
-          // Robust parser that extracts times cleanly regardless of string or timestamp structure
           const parseTime = (field) => {
             if (!field) return 0;
             if (field.toDate) return field.toDate().getTime();
-            // Fallback for custom formatted strings like "May 26, 2026 at..."
             if (typeof field === "string") {
               const cleanStr = field.replace(/\sat\s/, " ");
               const parsed = Date.parse(cleanStr);
@@ -105,19 +123,33 @@ export default function Home() {
             }
             return new Date(field).getTime() || 0;
           };
-
           return parseTime(b.sentAt) - parseTime(a.sentAt);
         });
 
-      setAllCorrespondence(records);
-    }, (err) => console.error("Archive ledger sync failed:", err));
+      setAllCorrespondence(cleanRecords);
+    };
+
+    // Sub-Query A: Letters I sent
+    const qSent = query(collection(db, "letters"), where("senderAddress", "==", myHandle));
+    const unsubscribeSent = onSnapshot(qSent, (snapshot) => {
+      sentRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      combineAndSortLedger();
+    }, (err) => console.error("Sent ledger track failed:", err));
+
+    // Sub-Query B: Letters addressed to me
+    const qReceived = query(collection(db, "letters"), where("recipientAddress", "==", myHandle));
+    const unsubscribeReceived = onSnapshot(qReceived, (snapshot) => {
+      receivedRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      combineAndSortLedger();
+    }, (err) => console.error("Received ledger track failed:", err));
+
 
     const fetchDirectory = async () => {
       try {
         const usersSnapshot = await getDocs(collection(db, "users"));
         const usersList = usersSnapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter(u => u.mailboxAddress !== user.mailboxAddress);
+          .filter(u => u.mailboxAddress?.toLowerCase() !== myHandle);
         setDirectoryUsers(usersList);
       } catch (err) {
         console.error("Could not pull directory listings:", err);
@@ -128,7 +160,8 @@ export default function Home() {
 
     return () => {
       unsubscribeInbox();
-      unsubscribeArchive();
+      unsubscribeSent();
+      unsubscribeReceived();
     };
   }, [user]);
 
@@ -362,27 +395,15 @@ export default function Home() {
     }
   };
 
-  const handleSelectContact = (address) => {
-    setRecipientAddress(`@${address}`);
-    setIsAddressBookOpen(false);
-    setMailStatus("");
-    setError("");
-  };
-
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-  };
-
   const filteredCorrespondence = allCorrespondence.filter((letter) => {
     const queryLower = searchQuery.toLowerCase().trim();
     if (!queryLower) return true;
 
     return (
-      letter.senderAddress.toLowerCase().includes(queryLower) ||
+      (letter.senderAddress && letter.senderAddress.toLowerCase().includes(queryLower)) ||
       (letter.recipientAddress && letter.recipientAddress.toLowerCase().includes(queryLower)) ||
       (letter.recipientEmail && letter.recipientEmail.toLowerCase().includes(queryLower)) ||
-      letter.body.toLowerCase().includes(queryLower)
+      (letter.body && letter.body.toLowerCase().includes(queryLower))
     );
   });
 
@@ -477,7 +498,7 @@ export default function Home() {
             </button>
           </section>
 
-          {/* Right Column: Stationery Desk */}
+          {/* Right Column */}
           <section className="lg:col-span-8 space-y-10">
             <div className="space-y-4">
               <div className="flex justify-between items-center border-b border-stone-200 pb-2">
@@ -607,8 +628,8 @@ export default function Home() {
                 ) : (
                   filteredCorrespondence.map((letter) => {
                     const isDraft = letter.status === "draft";
-                    const isInvitePending = letter.senderId === user.uid && letter.recipientEmail && letter.status === "pending";
-                    const isSentByMe = letter.senderId === user.uid && !isDraft && !isInvitePending;
+                    const isInvitePending = (letter.senderId === user.uid || letter.senderAddress?.toLowerCase() === user.mailboxAddress?.toLowerCase()) && letter.recipientEmail && letter.status === "pending";
+                    const isSentByMe = (letter.senderId === user.uid || letter.senderAddress?.toLowerCase() === user.mailboxAddress?.toLowerCase()) && !isDraft && !isInvitePending;
                     
                     const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
                     const isDelivered = dDate ? dDate <= new Date() : false;
