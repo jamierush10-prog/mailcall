@@ -53,52 +53,47 @@ export default function Home() {
   const [inviteModalData, setInviteModalData] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  // --- STREAM LETTERS & DIRECTORY ---
+  // --- SINGLE BULLETPROOF FIREBASE SEED STREAM ---
   useEffect(() => {
     if (!user) return;
 
     const myHandle = user.mailboxAddress?.toLowerCase() || "";
 
-    // 1. INBOX STREAM (Delivered incoming letters)
-    const inboxQuery = query(
-      collection(db, "letters"),
-      where("status", "==", "pending")
-    );
+    // Pull the raw collection. Zero filters means ZERO Firestore Index constraints.
+    const rawLettersQuery = query(collection(db, "letters"));
 
-    const unsubscribeInbox = onSnapshot(inboxQuery, (snapshot) => {
+    const unsubscribe = onSnapshot(rawLettersQuery, (snapshot) => {
       const now = new Date();
-      
-      const deliveredLetters = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
+      const rawDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Helper function to cleanly parse timestamps or custom text strings universally
+      const parseTime = (field) => {
+        if (!field) return 0;
+        if (field.toDate) return field.toDate().getTime();
+        if (typeof field === "string") {
+          const cleanStr = field.replace(/\sat\s/, " ");
+          const parsed = Date.parse(cleanStr);
+          return isNaN(parsed) ? 0 : parsed;
+        }
+        return new Date(field).getTime() || 0;
+      };
+
+      // 1. INBOX COMPLIANCE FILTER (Client-side evaluation)
+      const incomingInbox = rawDocs
         .filter(letter => {
+          const isPending = letter.status === "pending";
           const isMeRecipient = letter.recipientId === user.uid || (letter.recipientAddress?.toLowerCase() === myHandle);
-          if (!isMeRecipient) return false;
+          if (!isPending || !isMeRecipient) return false;
 
           const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : new Date(letter.deliveryDate);
           return dDate <= now;
         })
-        .sort((a, b) => {
-          const parseTime = (f) => f?.toDate ? f.toDate().getTime() : new Date(f).getTime() || 0;
-          return parseTime(b.deliveryDate) - parseTime(a.deliveryDate);
-        });
-      
-      setInbox(deliveredLetters);
-    }, (err) => console.error("Inbox sync failed:", err));
+        .sort((a, b) => parseTime(b.deliveryDate) - parseTime(a.deliveryDate));
 
+      setInbox(incomingInbox);
 
-    // 2. CORRESPONDENCE LEDGER (Scoped separate queries combined locally to obey security keys)
-    let sentRecords = [];
-    let receivedRecords = [];
-
-    const combineAndSortLedger = () => {
-      const now = new Date();
-      const combined = [...sentRecords, ...receivedRecords];
-      
-      // Deduplicate overlapping records cleanly
-      const uniqueMap = new Map();
-      combined.forEach(item => uniqueMap.set(item.id, item));
-      
-      const cleanRecords = Array.from(uniqueMap.values())
+      // 2. LEDGER / CORRESPONDENCE COMPLIANCE FILTER (Client-side evaluation)
+      const ledgerLogs = rawDocs
         .filter(letter => {
           const isDraft = letter.status === "draft";
           const amISender = letter.senderId === user.uid || (letter.senderAddress?.toLowerCase() === myHandle);
@@ -112,37 +107,12 @@ export default function Home() {
 
           return isSentByMe || isDraft || isInvitePending || isSavedIt;
         })
-        .sort((a, b) => {
-          const parseTime = (field) => {
-            if (!field) return 0;
-            if (field.toDate) return field.toDate().getTime();
-            if (typeof field === "string") {
-              const cleanStr = field.replace(/\sat\s/, " ");
-              const parsed = Date.parse(cleanStr);
-              return isNaN(parsed) ? 0 : parsed;
-            }
-            return new Date(field).getTime() || 0;
-          };
-          return parseTime(b.sentAt) - parseTime(a.sentAt);
-        });
+        .sort((a, b) => parseTime(b.sentAt) - parseTime(a.sentAt));
 
-      setAllCorrespondence(cleanRecords);
-    };
-
-    // Sub-Query A: Letters I sent
-    const qSent = query(collection(db, "letters"), where("senderAddress", "==", myHandle));
-    const unsubscribeSent = onSnapshot(qSent, (snapshot) => {
-      sentRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      combineAndSortLedger();
-    }, (err) => console.error("Sent ledger track failed:", err));
-
-    // Sub-Query B: Letters addressed to me
-    const qReceived = query(collection(db, "letters"), where("recipientAddress", "==", myHandle));
-    const unsubscribeReceived = onSnapshot(qReceived, (snapshot) => {
-      receivedRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      combineAndSortLedger();
-    }, (err) => console.error("Received ledger track failed:", err));
-
+      setAllCorrespondence(ledgerLogs);
+    }, (err) => {
+      console.error("Database seed synchronization failure:", err);
+    });
 
     const fetchDirectory = async () => {
       try {
@@ -158,11 +128,7 @@ export default function Home() {
 
     fetchDirectory();
 
-    return () => {
-      unsubscribeInbox();
-      unsubscribeSent();
-      unsubscribeReceived();
-    };
+    return () => unsubscribe();
   }, [user]);
 
   if (loading) {
