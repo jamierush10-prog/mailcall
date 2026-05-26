@@ -57,7 +57,6 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
 
-    // 1. Inbox Stream: Managed seamlessly using existing composite index map rules
     const inboxQuery = query(
       collection(db, "letters"),
       where("recipientId", "==", user.uid),
@@ -69,15 +68,15 @@ export default function Home() {
       const now = new Date();
       const deliveredLetters = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(letter => letter.deliveryDate?.toDate() <= now);
+        .filter(letter => {
+          const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : new Date(letter.deliveryDate);
+          return dDate <= now;
+        });
       
       setInbox(deliveredLetters);
     }, (err) => console.error("Inbox sync failed:", err));
 
-    // 2. Archive Drawer Stream: Pull documents safely by separating global tracking variables
-    const archiveQuery = query(
-      collection(db, "letters")
-    );
+    const archiveQuery = query(collection(db, "letters"));
 
     const unsubscribeArchive = onSnapshot(archiveQuery, (snapshot) => {
       const now = new Date();
@@ -87,17 +86,27 @@ export default function Home() {
           const isDraft = letter.status === "draft";
           const isInvitePending = letter.senderId === user.uid && letter.recipientEmail && letter.status === "pending";
           const isSentByMe = letter.senderId === user.uid && !isDraft && !isInvitePending;
-          const isSavedIt = letter.recipientId === user.uid && 
-                            letter.deliveryDate?.toDate() <= now && 
-                            letter.status === "archived";
+          
+          const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
+          const isSavedIt = letter.recipientId === user.uid && dDate && dDate <= now && letter.status === "archived";
 
           return isSentByMe || isDraft || isInvitePending || isSavedIt;
         })
-        // Client-side sorting mechanism bypasses Firestore's strict index restrictions perfectly
         .sort((a, b) => {
-          const timeA = a.sentAt?.toDate ? a.sentAt.toDate().getTime() : new Date(a.sentAt).getTime() || 0;
-          const timeB = b.sentAt?.toDate ? b.sentAt.toDate().getTime() : new Date(b.sentAt).getTime() || 0;
-          return timeB - timeA; // Newest letters automatically filter directly to the top layer
+          // Robust parser that extracts times cleanly regardless of string or timestamp structure
+          const parseTime = (field) => {
+            if (!field) return 0;
+            if (field.toDate) return field.toDate().getTime();
+            // Fallback for custom formatted strings like "May 26, 2026 at..."
+            if (typeof field === "string") {
+              const cleanStr = field.replace(/\sat\s/, " ");
+              const parsed = Date.parse(cleanStr);
+              return isNaN(parsed) ? 0 : parsed;
+            }
+            return new Date(field).getTime() || 0;
+          };
+
+          return parseTime(b.sentAt) - parseTime(a.sentAt);
         });
 
       setAllCorrespondence(records);
@@ -131,7 +140,6 @@ export default function Home() {
     );
   }
 
-  // --- ACCOUNT AUTHENTICATION & ENVELOPE HARVESTING ---
   const handleAuth = async (e) => {
     e.preventDefault();
     setError("");
@@ -185,7 +193,6 @@ export default function Home() {
     }
   };
 
-  // --- SAVE WORK IN PROGRESS DRAFT ---
   const handleSaveDraft = async () => {
     setMailStatus("");
     setError("");
@@ -205,7 +212,7 @@ export default function Home() {
           recipientAddress: isEmailFormat ? "" : cleanInput,
           recipientEmail: isEmailFormat ? cleanInput : "",
           body: letterBody,
-          sentAt: new Date()
+          sentAt: new Date().toISOString()
         });
         setMailStatus("Draft modifications updated in your correspondence drawer.");
       } else {
@@ -216,7 +223,7 @@ export default function Home() {
           recipientAddress: isEmailFormat ? "" : cleanInput,
           recipientEmail: isEmailFormat ? cleanInput : "",
           body: letterBody,
-          sentAt: new Date(),
+          sentAt: new Date().toISOString(),
           deliveryDate: null,
           status: "draft",
           isRead: false
@@ -230,7 +237,6 @@ export default function Home() {
     }
   };
 
-  // --- COMPOSING SYSTEM: REGULAR & INVITATION EMAILS ---
   const handleSendLetter = async (e) => {
     e.preventDefault();
     setMailStatus("");
@@ -274,8 +280,8 @@ export default function Home() {
           recipientAddress: resolvedRecipientAddress,
           recipientEmail: resolvedRecipientEmail,
           body: letterBody,
-          sentAt: new Date(),
-          deliveryDate: deliveryDate,
+          sentAt: new Date().toISOString(),
+          deliveryDate: deliveryDate.toISOString(),
           status: "pending"
         });
       } else {
@@ -286,8 +292,8 @@ export default function Home() {
           recipientAddress: resolvedRecipientAddress,
           recipientEmail: resolvedRecipientEmail,
           body: letterBody,
-          sentAt: new Date(),
-          deliveryDate: deliveryDate,
+          sentAt: new Date().toISOString(),
+          deliveryDate: deliveryDate.toISOString(),
           status: "pending",
           isRead: false
         });
@@ -312,7 +318,6 @@ export default function Home() {
     }
   };
 
-  // --- RETRIEVE DRAFT FROM HISTORICAL OVERVIEW ---
   const handleLoadDraft = (draftLetter) => {
     setActiveDraftId(draftLetter.id);
     setRecipientAddress(draftLetter.recipientEmail || `@${draftLetter.recipientAddress}`);
@@ -357,6 +362,18 @@ export default function Home() {
     }
   };
 
+  const handleSelectContact = (address) => {
+    setRecipientAddress(`@${address}`);
+    setIsAddressBookOpen(false);
+    setMailStatus("");
+    setError("");
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+  };
+
   const filteredCorrespondence = allCorrespondence.filter((letter) => {
     const queryLower = searchQuery.toLowerCase().trim();
     if (!queryLower) return true;
@@ -368,6 +385,14 @@ export default function Home() {
       letter.body.toLowerCase().includes(queryLower)
     );
   });
+
+  const getPostmarkDisplay = (field) => {
+    if (!field) return "unposted";
+    if (field.toDate) return field.toDate().toLocaleDateString();
+    const cleanStr = typeof field === "string" ? field.replace(/\sat\s/, " ") : field;
+    const d = new Date(cleanStr);
+    return isNaN(d.getTime()) ? "unposted" : d.toLocaleDateString();
+  };
 
   // --- LOGGED IN UI WORKSPACE ---
   if (user) {
@@ -545,7 +570,7 @@ export default function Home() {
                           <span className="font-mono text-sm text-stone-700 font-semibold">@{letter.senderAddress}</span>
                           {!letter.isRead && <span className="h-2 w-2 rounded-full bg-stone-800" />}
                         </div>
-                        <p className="text-xs text-stone-400 font-sans">Delivered: {letter.deliveryDate?.toDate().toLocaleDateString()}</p>
+                        <p className="text-xs text-stone-400 font-sans">Delivered: {getPostmarkDisplay(letter.deliveryDate)}</p>
                       </div>
                       <span className="text-xs font-sans text-stone-400 group-hover:text-stone-700 transition-colors">Break Seal &rarr;</span>
                     </div>
@@ -584,7 +609,9 @@ export default function Home() {
                     const isDraft = letter.status === "draft";
                     const isInvitePending = letter.senderId === user.uid && letter.recipientEmail && letter.status === "pending";
                     const isSentByMe = letter.senderId === user.uid && !isDraft && !isInvitePending;
-                    const isDelivered = letter.deliveryDate?.toDate() <= new Date();
+                    
+                    const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
+                    const isDelivered = dDate ? dDate <= new Date() : false;
                     
                     return (
                       <div 
@@ -627,7 +654,7 @@ export default function Home() {
                           ) : isSentByMe && !isDelivered ? (
                             <span className="text-stone-400 italic block">In Transit</span>
                           ) : (
-                            <span className="block">Postmark: {letter.deliveryDate?.toDate().toLocaleDateString()}</span>
+                            <span className="block">Postmark: {getPostmarkDisplay(letter.sentAt)}</span>
                           )}
                         </div>
                       </div>
@@ -682,7 +709,7 @@ export default function Home() {
                   <span className="mx-2">|</span>
                   <span>To: <strong className="font-mono text-stone-600 text-sm">{activeLetter.recipientEmail ? activeLetter.recipientEmail : `@${activeLetter.recipientAddress || "unaddressed"}`}</strong></span>
                   <span className="mx-2">|</span>
-                  <span>Date: {activeLetter.deliveryDate?.toDate().toLocaleDateString() || "unposted"}</span>
+                  <span>Date: {getPostmarkDisplay(activeLetter.sentAt)}</span>
                 </div>
                 <button onClick={() => setActiveLetter(null)} className="uppercase tracking-wider hover:text-stone-800 transition-colors">Fold Paper</button>
               </div>
