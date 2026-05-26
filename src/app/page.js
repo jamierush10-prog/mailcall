@@ -35,6 +35,7 @@ export default function Home() {
   const [recipientAddress, setRecipientAddress] = useState("");
   const [letterBody, setLetterBody] = useState("");
   const [mailStatus, setMailStatus] = useState("");
+  const [projectedArrival, setProjectedArrival] = useState("");
 
   // System Logs State
   const [inbox, setInbox] = useState([]);
@@ -52,6 +53,23 @@ export default function Home() {
   // Invitation Modal Specific State
   const [inviteModalData, setInviteModalData] = useState(null);
   const [copied, setCopied] = useState(false);
+
+  // --- REAL-TIME DELIVERY TIMING ESTIMATOR ---
+  useEffect(() => {
+    const updateProjection = () => {
+      const targetDate = calculateDeliveryDate(new Date());
+      const formatStr = targetDate.toLocaleDateString(undefined, {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+      });
+      setProjectedArrival(`${formatStr} at 12:00 PM`);
+    };
+
+    updateProjection();
+    const interval = setInterval(updateProjection, 60000); // Recalculate every minute
+    return () => clearInterval(interval);
+  }, []);
 
   // --- RAW INDEXLESS FIREBASE DATA STREAM ---
   useEffect(() => {
@@ -368,11 +386,6 @@ export default function Home() {
     setError("");
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-  };
-
   const filteredCorrespondence = allCorrespondence.filter((letter) => {
     const queryLower = searchQuery.toLowerCase().trim();
     if (!queryLower) return true;
@@ -432,7 +445,7 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 3.75H6.75A2.25 2.25 0 0 0 4.5 6v12a2.25 2.25 0 0 0 2.25 2.25h10.5A2.25 2.25 0 0 0 19.5 18V6a2.25 2.25 0 0 0-2.25-2.25H15M9 3.75V1.5h6v2.25M9 3.75h6m-6 0v6l3-1.5 3 1.5v-6" />
               </svg>
               <span className="font-sans text-xs uppercase tracking-wider font-semibold text-stone-700 mt-4 block">
-                Open Mailbox ({inbox.length})
+                Open Mailbox
               </span>
               <span className="text-[10px] text-stone-400 font-sans mt-2 block italic">
                 Mail delivered Mon – Sat at Noon CT
@@ -479,10 +492,20 @@ export default function Home() {
           {/* Right Column: Stationery Slate Desk */}
           <section className="lg:col-span-8 space-y-10">
             <div className="space-y-4">
-              <div className="flex justify-between items-center border-b border-stone-200 pb-2">
-                <h2 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold">
-                  Compose Letter {activeDraftId && <span className="text-stone-500 font-serif lowercase italic normal-case ml-2">(editing saved draft)</span>}
-                </h2>
+              <div className="flex justify-between items-end border-b border-stone-200 pb-2">
+                <div className="flex items-baseline space-x-2">
+                  <h2 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold">
+                    Compose Letter
+                  </h2>
+                  <span className="text-xs text-stone-400 font-sans italic">
+                    (Mails out for delivery: {projectedArrival})
+                  </span>
+                  {activeDraftId && (
+                    <span className="text-stone-500 font-serif lowercase italic normal-case text-xs">
+                      [editing saved draft]
+                    </span>
+                  )}
+                </div>
                 {activeDraftId && (
                   <button 
                     onClick={() => { setActiveDraftId(null); setRecipientAddress(""); setLetterBody(""); setMailStatus(""); }}
@@ -567,9 +590,7 @@ export default function Home() {
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2">
                           <span className="font-mono text-sm text-stone-700 font-semibold">@{letter.senderAddress}</span>
-                          {!letter.isRead && <span className="h-2 w-2 rounded-full bg-stone-800" />}
                         </div>
-                        <p className="text-xs text-stone-400 font-sans">Delivered: {getPostmarkDisplay(letter.deliveryDate)}</p>
                       </div>
                       <span className="text-xs font-sans text-stone-400 group-hover:text-stone-700 transition-colors">Break Seal &rarr;</span>
                     </div>
@@ -580,7 +601,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* MODAL 2: CORRESPONDENCE LEDGER ARCHIVE OVERVIEW */}
+        {/* MODAL 2: SAVED CORRESPONDENCE LEDGER */}
         {isArchiveOpen && (
           <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-40">
             <div className="bg-[#FDFBF7] border border-stone-300 max-w-2xl w-full rounded-lg shadow-xl p-6 sm:p-8 relative max-h-[85vh] flex flex-col">
