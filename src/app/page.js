@@ -63,15 +63,15 @@ export default function Home() {
         month: "short",
         day: "numeric",
       });
-      setProjectedArrival(`${formatStr} at 12:00 PM`);
+      setProjectedArrival(`Current Delivery: ${formatStr} at 12:00 PM CT`);
     };
 
     updateProjection();
-    const interval = setInterval(updateProjection, 60000); // Recalculate every minute
+    const interval = setInterval(updateProjection, 60000); 
     return () => clearInterval(interval);
   }, []);
 
-  // --- RAW INDEXLESS FIREBASE DATA STREAM ---
+  // --- COMPREHENSIVE STREAM DATA DESK ---
   useEffect(() => {
     if (!user) return;
 
@@ -118,6 +118,7 @@ export default function Home() {
           const amISender = letter.senderId === user.uid || sndAddress === myHandle;
           const amIRecipient = letter.recipientId === user.uid || recAddress === myHandle;
 
+          // Pending invitation criteria: letter must explicitly still carry a placeholder recipient email string
           const isInvitePending = amISender && letter.recipientEmail && letter.status === "pending";
           const isSentByMe = amISender && !isDraft && !isInvitePending;
           
@@ -130,7 +131,7 @@ export default function Home() {
 
       setAllCorrespondence(ledgerLogs);
     }, (err) => {
-      console.error("Database seed stream broken:", err);
+      console.error("Database loop sync broken:", err);
     });
 
     const fetchDirectory = async () => {
@@ -157,6 +158,7 @@ export default function Home() {
     );
   }
 
+  // --- ACCOUNT SETUP & DYNAMIC ENVELOPE HARVESTER ROUTINE ---
   const handleAuth = async (e) => {
     e.preventDefault();
     setError("");
@@ -184,20 +186,24 @@ export default function Home() {
           createdAt: new Date()
         });
 
-        const inviteQuery = query(
-          collection(db, "letters"),
-          where("recipientEmail", "==", cleanEmail)
-        );
-        const inviteSnapshot = await getDocs(inviteQuery);
+        // HARVEST LOOP: Scan for staged invitation entries matching this fresh user email address
+        const lettersRef = collection(db, "letters");
+        const inviteSnapshot = await getDocs(lettersRef);
         
-        if (!inviteSnapshot.empty) {
+        const matchingInvites = inviteSnapshot.docs.filter(d => {
+          const data = d.data();
+          return data.recipientEmail && data.recipientEmail.toLowerCase().trim() === cleanEmail;
+        });
+        
+        if (matchingInvites.length > 0) {
           const batch = writeBatch(db);
-          inviteSnapshot.docs.forEach((inviteDoc) => {
+          matchingInvites.forEach((inviteDoc) => {
             const docRef = doc(db, "letters", inviteDoc.id);
+            // DYNAMIC SHIFT: Upgrade the credentials instantly to tie into the new platform profile
             batch.update(docRef, {
               recipientId: userCredential.user.uid,
               recipientAddress: cleanAddress,
-              recipientEmail: "" 
+              recipientEmail: "" // Wiping this drops it out of 'Pending Invitation' status layout maps instantly!
             });
           });
           await batch.commit();
@@ -498,7 +504,7 @@ export default function Home() {
                     Compose Letter
                   </h2>
                   <span className="text-xs text-stone-400 font-sans italic">
-                    (Mails out for delivery: {projectedArrival})
+                    ({projectedArrival})
                   </span>
                   {activeDraftId && (
                     <span className="text-stone-500 font-serif lowercase italic normal-case text-xs">
