@@ -53,20 +53,20 @@ export default function Home() {
   const [inviteModalData, setInviteModalData] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  // --- SINGLE BULLETPROOF FIREBASE SEED STREAM ---
+  // --- RAW BULLETPROOF FIREBASE DATALINK ---
   useEffect(() => {
     if (!user) return;
 
-    const myHandle = user.mailboxAddress?.toLowerCase() || "";
+    const myHandle = (user.mailboxAddress || "").toLowerCase().trim();
 
-    // Pull the raw collection. Zero filters means ZERO Firestore Index constraints.
+    // Zero parameters query means ZERO index compilation blocks from Google Cloud
     const rawLettersQuery = query(collection(db, "letters"));
 
     const unsubscribe = onSnapshot(rawLettersQuery, (snapshot) => {
       const now = new Date();
       const rawDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // Helper function to cleanly parse timestamps or custom text strings universally
+      // Fallback timestamp parser to handle raw string stamps and server timestamps identically
       const parseTime = (field) => {
         if (!field) return 0;
         if (field.toDate) return field.toDate().getTime();
@@ -78,12 +78,14 @@ export default function Home() {
         return new Date(field).getTime() || 0;
       };
 
-      // 1. INBOX COMPLIANCE FILTER (Client-side evaluation)
+      // 1. INBOX LIST SEPARATION FILTER
       const incomingInbox = rawDocs
         .filter(letter => {
-          const isPending = letter.status === "pending";
-          const isMeRecipient = letter.recipientId === user.uid || (letter.recipientAddress?.toLowerCase() === myHandle);
-          if (!isPending || !isMeRecipient) return false;
+          if (letter.status !== "pending") return false;
+          
+          const recAddress = (letter.recipientAddress || "").toLowerCase().trim();
+          const isMeRecipient = letter.recipientId === user.uid || recAddress === myHandle;
+          if (!isMeRecipient) return false;
 
           const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : new Date(letter.deliveryDate);
           return dDate <= now;
@@ -92,12 +94,15 @@ export default function Home() {
 
       setInbox(incomingInbox);
 
-      // 2. LEDGER / CORRESPONDENCE COMPLIANCE FILTER (Client-side evaluation)
+      // 2. SAVED CORRESPONDENCE LEDGER FILTER (Drafts, Sent, Pending Invites, Archived Received)
       const ledgerLogs = rawDocs
         .filter(letter => {
           const isDraft = letter.status === "draft";
-          const amISender = letter.senderId === user.uid || (letter.senderAddress?.toLowerCase() === myHandle);
-          const amIRecipient = letter.recipientId === user.uid || (letter.recipientAddress?.toLowerCase() === myHandle);
+          const sndAddress = (letter.senderAddress || "").toLowerCase().trim();
+          const recAddress = (letter.recipientAddress || "").toLowerCase().trim();
+          
+          const amISender = letter.senderId === user.uid || sndAddress === myHandle;
+          const amIRecipient = letter.recipientId === user.uid || recAddress === myHandle;
 
           const isInvitePending = amISender && letter.recipientEmail && letter.status === "pending";
           const isSentByMe = amISender && !isDraft && !isInvitePending;
@@ -111,7 +116,7 @@ export default function Home() {
 
       setAllCorrespondence(ledgerLogs);
     }, (err) => {
-      console.error("Database seed synchronization failure:", err);
+      console.error("Database seed stream broken:", err);
     });
 
     const fetchDirectory = async () => {
@@ -119,10 +124,10 @@ export default function Home() {
         const usersSnapshot = await getDocs(collection(db, "users"));
         const usersList = usersSnapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter(u => u.mailboxAddress?.toLowerCase() !== myHandle);
+          .filter(u => (u.mailboxAddress || "").toLowerCase().trim() !== myHandle);
         setDirectoryUsers(usersList);
       } catch (err) {
-        console.error("Could not pull directory listings:", err);
+        console.error("Directory fetch crash:", err);
       }
     };
 
@@ -464,7 +469,7 @@ export default function Home() {
             </button>
           </section>
 
-          {/* Right Column */}
+          {/* Right Column: Stationery Desk */}
           <section className="lg:col-span-8 space-y-10">
             <div className="space-y-4">
               <div className="flex justify-between items-center border-b border-stone-200 pb-2">
@@ -594,8 +599,11 @@ export default function Home() {
                 ) : (
                   filteredCorrespondence.map((letter) => {
                     const isDraft = letter.status === "draft";
-                    const isInvitePending = (letter.senderId === user.uid || letter.senderAddress?.toLowerCase() === user.mailboxAddress?.toLowerCase()) && letter.recipientEmail && letter.status === "pending";
-                    const isSentByMe = (letter.senderId === user.uid || letter.senderAddress?.toLowerCase() === user.mailboxAddress?.toLowerCase()) && !isDraft && !isInvitePending;
+                    const sndAddress = (letter.senderAddress || "").toLowerCase().trim();
+                    const currentMyHandle = (user.mailboxAddress || "").toLowerCase().trim();
+                    
+                    const isInvitePending = (letter.senderId === user.uid || sndAddress === currentMyHandle) && letter.recipientEmail && letter.status === "pending";
+                    const isSentByMe = (letter.senderId === user.uid || sndAddress === currentMyHandle) && !isDraft && !isInvitePending;
                     
                     const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
                     const isDelivered = dDate ? dDate <= new Date() : false;
