@@ -57,6 +57,7 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
 
+    // 1. Inbox Stream: Managed seamlessly using existing composite index map rules
     const inboxQuery = query(
       collection(db, "letters"),
       where("recipientId", "==", user.uid),
@@ -73,9 +74,9 @@ export default function Home() {
       setInbox(deliveredLetters);
     }, (err) => console.error("Inbox sync failed:", err));
 
+    // 2. Archive Drawer Stream: Pull documents safely by separating global tracking variables
     const archiveQuery = query(
-      collection(db, "letters"),
-      orderBy("sentAt", "desc")
+      collection(db, "letters")
     );
 
     const unsubscribeArchive = onSnapshot(archiveQuery, (snapshot) => {
@@ -83,13 +84,20 @@ export default function Home() {
       const records = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .filter(letter => {
-          const iSentIt = letter.senderId === user.uid && letter.status !== "draft";
-          const myDraft = letter.senderId === user.uid && letter.status === "draft";
-          const iSavedIt = letter.recipientId === user.uid && 
+          const isDraft = letter.status === "draft";
+          const isInvitePending = letter.senderId === user.uid && letter.recipientEmail && letter.status === "pending";
+          const isSentByMe = letter.senderId === user.uid && !isDraft && !isInvitePending;
+          const isSavedIt = letter.recipientId === user.uid && 
                             letter.deliveryDate?.toDate() <= now && 
                             letter.status === "archived";
 
-          return iSentIt || myDraft || iSavedIt;
+          return isSentByMe || isDraft || isInvitePending || isSavedIt;
+        })
+        // Client-side sorting mechanism bypasses Firestore's strict index restrictions perfectly
+        .sort((a, b) => {
+          const timeA = a.sentAt?.toDate ? a.sentAt.toDate().getTime() : new Date(a.sentAt).getTime() || 0;
+          const timeB = b.sentAt?.toDate ? b.sentAt.toDate().getTime() : new Date(b.sentAt).getTime() || 0;
+          return timeB - timeA; // Newest letters automatically filter directly to the top layer
         });
 
       setAllCorrespondence(records);
@@ -151,7 +159,6 @@ export default function Home() {
           createdAt: new Date()
         });
 
-        // Envelope Harvesting Hook: Gather outstanding email-reserved invites matching this target email
         const inviteQuery = query(
           collection(db, "letters"),
           where("recipientEmail", "==", cleanEmail)
@@ -162,11 +169,10 @@ export default function Home() {
           const batch = writeBatch(db);
           inviteSnapshot.docs.forEach((inviteDoc) => {
             const docRef = doc(db, "letters", inviteDoc.id);
-            // Dynamic Shift: Reassign recipient identifier fields to the new user handle instantly
             batch.update(docRef, {
               recipientId: userCredential.user.uid,
               recipientAddress: cleanAddress,
-              recipientEmail: "" // Wipe raw holding string so it shifts to active outbox category
+              recipientEmail: "" 
             });
           });
           await batch.commit();
@@ -246,17 +252,18 @@ export default function Home() {
 
       if (isEmailFormat) {
         resolvedRecipientEmail = cleanInput;
-        resolvedRecipientAddress = ""; // Leave blank until harvested during profile setup
+        resolvedRecipientAddress = ""; 
       } else {
         const q = query(collection(db, "users"), where("mailboxAddress", "==", cleanInput));
         const querySnapshot = await getDocs(q);
-        if (querySnapshot.empty) {
+        if (!querySnapshot.empty) {
+          const recipientDoc = querySnapshot.docs[0];
+          resolvedRecipientId = recipientDoc.id;
+          resolvedRecipientAddress = cleanInput;
+        } else {
           setError(`No mailbox found with the handle address @${cleanInput}`);
           return;
         }
-        const recipientDoc = querySnapshot.docs[0];
-        resolvedRecipientId = recipientDoc.id;
-        resolvedRecipientAddress = cleanInput;
       }
 
       const deliveryDate = calculateDeliveryDate(new Date());
@@ -267,7 +274,7 @@ export default function Home() {
           recipientAddress: resolvedRecipientAddress,
           recipientEmail: resolvedRecipientEmail,
           body: letterBody,
-          sentAt: serverTimestamp(),
+          sentAt: new Date(),
           deliveryDate: deliveryDate,
           status: "pending"
         });
@@ -279,7 +286,7 @@ export default function Home() {
           recipientAddress: resolvedRecipientAddress,
           recipientEmail: resolvedRecipientEmail,
           body: letterBody,
-          sentAt: serverTimestamp(),
+          sentAt: new Date(),
           deliveryDate: deliveryDate,
           status: "pending",
           isRead: false
@@ -348,18 +355,6 @@ export default function Home() {
     } catch (err) {
       console.error("Could not trash letter:", err);
     }
-  };
-
-  const handleSelectContact = (address) => {
-    setRecipientAddress(`@${address}`);
-    setIsAddressBookOpen(false);
-    setMailStatus("");
-    setError("");
-  };
-
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
   };
 
   const filteredCorrespondence = allCorrespondence.filter((letter) => {
@@ -561,9 +556,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* ============================================== */}
-        {/* MODAL 2: SAVED CORRESPONDENCE LEDGER (UPDATED) */}
-        {/* ============================================== */}
+        {/* MODAL 2: SAVED CORRESPONDENCE LEDGER */}
         {isArchiveOpen && (
           <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-40">
             <div className="bg-[#FDFBF7] border border-stone-300 max-w-2xl w-full rounded-lg shadow-xl p-6 sm:p-8 relative max-h-[85vh] flex flex-col">
@@ -601,24 +594,19 @@ export default function Home() {
                       >
                         <div className="space-y-1 font-serif">
                           <div className="flex items-center space-x-2">
-                            {/* 1. Draft Status */}
                             {isDraft && (
                               <span className="text-xs font-sans uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded font-medium">Draft Sheet</span>
                             )}
-                            {/* 2. Pending Invitation Status */}
                             {isInvitePending && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-500 bg-stone-200 border border-stone-300/60 px-1.5 py-0.5 rounded font-medium">Pending Invitation</span>
                             )}
-                            {/* 3. Standard Sent Outbox Status */}
                             {isSentByMe && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded">To Outbox</span>
                             )}
-                            {/* 4. Received Saved Mail Status */}
                             {!isSentByMe && !isDraft && !isInvitePending && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-500 bg-stone-200/60 px-1.5 py-0.5 rounded">From Inbox</span>
                             )}
 
-                            {/* Recipient Naming Parameter Layer */}
                             <span className="font-mono text-sm text-stone-800 font-semibold">
                               {isInvitePending 
                                 ? letter.recipientEmail 
