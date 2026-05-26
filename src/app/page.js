@@ -46,6 +46,7 @@ export default function Home() {
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isAddressBookOpen, setIsAddressBookOpen] = useState(false);
+  const [isPurposeOpen, setIsPurposeOpen] = useState(false);
   const [activeLetter, setActiveLetter] = useState(null);
   
   // Invitation Modal Specific State
@@ -283,7 +284,6 @@ export default function Home() {
         });
       }
 
-      // If it's an email format invitation, pop up the modal data payload
       if (isEmailFormat) {
         setInviteModalData({
           email: cleanInput,
@@ -395,7 +395,7 @@ export default function Home() {
 
         <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12">
           
-          {/* Left Column */}
+          {/* Left Column: Post Desk Gateway System */}
           <section className="lg:col-span-4 flex flex-col items-center justify-start pt-6 space-y-4">
             <div className="w-full">
               <h2 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold border-b border-stone-200 pb-2 text-center w-full">
@@ -439,6 +439,19 @@ export default function Home() {
               </svg>
               <span className="font-sans text-xs uppercase tracking-widest text-stone-600 font-medium">
                 Address Book
+              </span>
+            </button>
+
+            {/* Purpose & Manifesto Lever */}
+            <button
+              onClick={() => setIsPurposeOpen(true)}
+              className="group p-4 border border-dashed border-stone-300 hover:border-stone-400 bg-transparent rounded-lg text-center flex flex-col items-center w-64 transition-all"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1" stroke="currentColor" className="w-5 h-5 text-stone-400 mb-1 group-hover:text-stone-600">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
+              </svg>
+              <span className="font-sans text-xs uppercase tracking-widest text-stone-400 group-hover:text-stone-600 font-medium">
+                Our Purpose
               </span>
             </button>
           </section>
@@ -711,39 +724,90 @@ export default function Home() {
           </div>
         )}
 
-        {/* ============================================== */}
-        {/* MODAL 5: NEW SHAREABLE INVITATION SNIPPET DIALOG */}
-        {/* ============================================== */}
+        {/* MODAL 5: SHAREABLE INVITATION SNIPPET DIALOG */}
         {inviteModalData && (
           <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
             <div className="bg-[#FDFBF7] border border-stone-300 max-w-lg w-full rounded-lg shadow-2xl p-6 sm:p-8 relative font-serif">
               <div className="border-b border-stone-200 pb-3 mb-4 flex justify-between items-center">
                 <h3 className="text-base font-sans uppercase tracking-widest text-stone-600 font-semibold">Share Invite Loop</h3>
-                <button 
-                  onClick={() => setInviteModalData(null)}
-                  className="font-sans text-xs uppercase text-stone-400 hover:text-stone-800 tracking-wider"
-                >
-                  Close
-                </button>
+                <button onClick={() => setInviteModalData(null)} className="font-sans text-xs uppercase text-stone-400 hover:text-stone-800 tracking-wider">Close</button>
               </div>
-
               <p className="text-xs text-stone-500 font-sans mb-4 leading-relaxed">
                 Copy the snippet below to send over text, social media, or email. Your letter has been securely staged in the cloud.
               </p>
-
-              {/* Lined Text Field Sniquet Display */}
               <div className="bg-white border border-stone-200 rounded p-4 text-xs font-serif leading-relaxed text-stone-700 select-all mb-5 relative max-h-48 overflow-y-auto shadow-2xs whitespace-pre-wrap">
                 {inviteTextPayload}
               </div>
-
               <div className="flex justify-end space-x-3 font-sans text-xs">
                 <button
                   onClick={() => copyToClipboard(inviteTextPayload)}
                   className={`px-4 py-2 rounded border transition-all uppercase tracking-wider ${copied ? 'bg-stone-100 text-stone-500 border-stone-200' : 'bg-stone-900 text-white border-stone-900 hover:bg-stone-800'}`}
                 >
-                  {copied ? "Copied to Clipboard!" : "Copy Snippet Text"}
+                  {copied ? "Copied!" : "Copy Snippet Text"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================== */}
+        {/* MODAL 6: MANIFESTO & PURPOSE EXPLANATION */}
+        {/* ============================================== */}
+        {isPurposeOpen && (
+          <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <div className="bg-white border border-stone-300 max-w-xl w-full rounded shadow-2xl p-6 sm:p-8 relative flex flex-col max-h-[85vh]">
+              
+              <div className="flex justify-between items-center border-b border-stone-200 pb-3 mb-5">
+                <h3 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold">
+                  About Mailcall
+                </h3>
+                <button 
+                  onClick={() => setIsPurposeOpen(false)}
+                  className="font-sans text-xs uppercase text-stone-400 hover:text-stone-800 tracking-wider transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="overflow-y-auto flex-1 pr-2 space-y-5 text-sm text-stone-700 leading-relaxed font-serif">
+                <div>
+                  <h4 className="text-stone-900 font-sans text-xs uppercase tracking-wider font-bold mb-1">
+                    The Purpose
+                  </h4>
+                  <p>
+                    Mailcall is an intentional experiment designed to reject the exhausting pace of modern digital instant messaging. In a world saturated with immediate notifications, typing boxes, and constant availability, our minds have lost the capacity for deep, contemplative communication. This application acts as a private harbor—restoring the slow, deliberate rhythm of analog letter-writing back to your digital desk.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="text-stone-900 font-sans text-xs uppercase tracking-wider font-bold mb-1">
+                    How It Works
+                  </h4>
+                  <ul className="list-disc pl-5 space-y-2 text-stone-600 text-xs">
+                    <li>
+                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">The Two-Cycle Rule:</strong>
+                      Every letter you mail undergoes a mandatory transit cycle. It does not drop into the recipient's mailbox instantly. Instead, it travels through the system and is held in transit for exactly two post cycles.
+                    </li>
+                    <li>
+                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">Fixed Mail Call:</strong>
+                      Delivery runs strictly **Monday through Saturday at exactly Noon Central Time**. If a letter’s transit period wraps up on a Sunday, it will wait securely on the sorting shelf until the official Monday mail call.
+                    </li>
+                    <li>
+                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">The Quiet Mailbox:</strong>
+                      To respect your peace, there are no unread notification counts, flashing numbers, or alert popups on your main dashboard desk. To see if the post has arrived, you must intentionally open your Post Box door to look inside.
+                    </li>
+                    <li>
+                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">Immutable Inboxes:</strong>
+                      Letters wait inside your mailbox until you explicitly sit down to read them. Once unsealed, you have a conscious choice: permanently move the paper to the **Trash**, or file it safely away in your permanent **Saved Correspondence** ledger.
+                    </li>
+                  </ul>
+                </div>
+
+                <p className="text-xs text-stone-400 italic pt-2 border-t border-stone-100 font-sans text-center">
+                  Take your time. Write with intention.
+                </p>
+              </div>
+
             </div>
           </div>
         )}
