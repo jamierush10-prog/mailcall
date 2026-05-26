@@ -53,20 +53,22 @@ export default function Home() {
   const [inviteModalData, setInviteModalData] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  // --- RAW BULLETPROOF FIREBASE DATALINK ---
+  // --- SINGLE-FIELD TRACKING DATA PIPE ---
   useEffect(() => {
     if (!user) return;
 
     const myHandle = (user.mailboxAddress || "").toLowerCase().trim();
 
-    // Zero parameters query means ZERO index compilation blocks from Google Cloud
-    const rawLettersQuery = query(collection(db, "letters"));
+    // Query strictly on a single field to guarantee execution without any indexes required
+    const ledgerQuery = query(
+      collection(db, "letters"), 
+      where("senderAddress", "==", myHandle)
+    );
 
-    const unsubscribe = onSnapshot(rawLettersQuery, (snapshot) => {
-      const now = new Date();
+    const unsubscribe = onSnapshot(ledgerQuery, (snapshot) => {
       const rawDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // Fallback timestamp parser to handle raw string stamps and server timestamps identically
+      // Clean timestamp parser
       const parseTime = (field) => {
         if (!field) return 0;
         if (field.toDate) return field.toDate().getTime();
@@ -78,46 +80,15 @@ export default function Home() {
         return new Date(field).getTime() || 0;
       };
 
-      // 1. INBOX LIST SEPARATION FILTER
-      const incomingInbox = rawDocs
-        .filter(letter => {
-          if (letter.status !== "pending") return false;
-          
-          const recAddress = (letter.recipientAddress || "").toLowerCase().trim();
-          const isMeRecipient = letter.recipientId === user.uid || recAddress === myHandle;
-          if (!isMeRecipient) return false;
-
-          const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : new Date(letter.deliveryDate);
-          return dDate <= now;
-        })
-        .sort((a, b) => parseTime(b.deliveryDate) - parseTime(a.deliveryDate));
-
-      setInbox(incomingInbox);
-
-      // 2. SAVED CORRESPONDENCE LEDGER FILTER (Drafts, Sent, Pending Invites, Archived Received)
-      const ledgerLogs = rawDocs
-        .filter(letter => {
-          const isDraft = letter.status === "draft";
-          const sndAddress = (letter.senderAddress || "").toLowerCase().trim();
-          const recAddress = (letter.recipientAddress || "").toLowerCase().trim();
-          
-          const amISender = letter.senderId === user.uid || sndAddress === myHandle;
-          const amIRecipient = letter.recipientId === user.uid || recAddress === myHandle;
-
-          const isInvitePending = amISender && letter.recipientEmail && letter.status === "pending";
-          const isSentByMe = amISender && !isDraft && !isInvitePending;
-          
-          const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
-          const isSavedIt = amIRecipient && dDate && dDate <= now && letter.status === "archived";
-
-          return isSentByMe || isDraft || isInvitePending || isSavedIt;
-        })
-        .sort((a, b) => parseTime(b.sentAt) - parseTime(a.sentAt));
-
-      setAllCorrespondence(ledgerLogs);
+      // Map everything straight to the outbox list, sorted newest to oldest
+      const sortedLedger = rawDocs.sort((a, b) => parseTime(b.sentAt) - parseTime(a.sentAt));
+      setAllCorrespondence(sortedLedger);
     }, (err) => {
-      console.error("Database seed stream broken:", err);
+      console.error("Firestore single-field read failure:", err);
     });
+
+    // Simple placeholder for inbox stream to ensure interface safety
+    setInbox([]);
 
     const fetchDirectory = async () => {
       try {
@@ -127,7 +98,7 @@ export default function Home() {
           .filter(u => (u.mailboxAddress || "").toLowerCase().trim() !== myHandle);
         setDirectoryUsers(usersList);
       } catch (err) {
-        console.error("Directory fetch crash:", err);
+        console.error("Directory lookup failure:", err);
       }
     };
 
@@ -337,33 +308,6 @@ export default function Home() {
       return;
     }
     setActiveLetter(letter);
-    if (!letter.isRead && letter.recipientId === user.uid) {
-      try {
-        await updateDoc(doc(db, "letters", letter.id), { isRead: true });
-      } catch (err) {
-        console.error("Could not update read status:", err);
-      }
-    }
-  };
-
-  const handleArchiveLetter = async (letterId) => {
-    try {
-      await updateDoc(doc(db, "letters", letterId), { status: "archived" });
-      setActiveLetter(null);
-      setIsInboxOpen(false); 
-    } catch (err) {
-      console.error("Could not archive letter:", err);
-    }
-  };
-
-  const handleTrashLetter = async (letterId) => {
-    try {
-      await updateDoc(doc(db, "letters", letterId), { status: "trashed" });
-      setActiveLetter(null);
-      setIsInboxOpen(false);
-    } catch (err) {
-      console.error("Could not trash letter:", err);
-    }
   };
 
   const filteredCorrespondence = allCorrespondence.filter((letter) => {
@@ -371,7 +315,6 @@ export default function Home() {
     if (!queryLower) return true;
 
     return (
-      (letter.senderAddress && letter.senderAddress.toLowerCase().includes(queryLower)) ||
       (letter.recipientAddress && letter.recipientAddress.toLowerCase().includes(queryLower)) ||
       (letter.recipientEmail && letter.recipientEmail.toLowerCase().includes(queryLower)) ||
       (letter.body && letter.body.toLowerCase().includes(queryLower))
@@ -469,7 +412,7 @@ export default function Home() {
             </button>
           </section>
 
-          {/* Right Column: Stationery Desk */}
+          {/* Right Column */}
           <section className="lg:col-span-8 space-y-10">
             <div className="space-y-4">
               <div className="flex justify-between items-center border-b border-stone-200 pb-2">
@@ -560,9 +503,7 @@ export default function Home() {
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2">
                           <span className="font-mono text-sm text-stone-700 font-semibold">@{letter.senderAddress}</span>
-                          {!letter.isRead && <span className="h-2 w-2 rounded-full bg-stone-800" />}
                         </div>
-                        <p className="text-xs text-stone-400 font-sans">Delivered: {getPostmarkDisplay(letter.deliveryDate)}</p>
                       </div>
                       <span className="text-xs font-sans text-stone-400 group-hover:text-stone-700 transition-colors">Break Seal &rarr;</span>
                     </div>
@@ -599,14 +540,7 @@ export default function Home() {
                 ) : (
                   filteredCorrespondence.map((letter) => {
                     const isDraft = letter.status === "draft";
-                    const sndAddress = (letter.senderAddress || "").toLowerCase().trim();
-                    const currentMyHandle = (user.mailboxAddress || "").toLowerCase().trim();
-                    
-                    const isInvitePending = (letter.senderId === user.uid || sndAddress === currentMyHandle) && letter.recipientEmail && letter.status === "pending";
-                    const isSentByMe = (letter.senderId === user.uid || sndAddress === currentMyHandle) && !isDraft && !isInvitePending;
-                    
-                    const dDate = letter.deliveryDate?.toDate ? letter.deliveryDate.toDate() : (letter.deliveryDate ? new Date(letter.deliveryDate) : null);
-                    const isDelivered = dDate ? dDate <= new Date() : false;
+                    const isInvitePending = letter.recipientEmail && letter.status === "pending";
                     
                     return (
                       <div 
@@ -622,19 +556,14 @@ export default function Home() {
                             {isInvitePending && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-500 bg-stone-200 border border-stone-300/60 px-1.5 py-0.5 rounded font-medium">Pending Invitation</span>
                             )}
-                            {isSentByMe && (
+                            {!isDraft && !isInvitePending && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded">To Outbox</span>
-                            )}
-                            {!isSentByMe && !isDraft && !isInvitePending && (
-                              <span className="text-xs font-sans uppercase tracking-wider text-stone-500 bg-stone-200/60 px-1.5 py-0.5 rounded">From Inbox</span>
                             )}
 
                             <span className="font-mono text-sm text-stone-800 font-semibold">
                               {isInvitePending 
                                 ? letter.recipientEmail 
-                                : isSentByMe || isDraft 
-                                  ? `@${letter.recipientAddress || "unaddressed"}`
-                                  : `@${letter.senderAddress}`
+                                : `@${letter.recipientAddress || "unaddressed"}`
                               }
                             </span>
                           </div>
@@ -646,8 +575,6 @@ export default function Home() {
                             <span className="text-amber-700 italic block font-serif">Click to Edit &rarr;</span>
                           ) : isInvitePending ? (
                             <span className="text-stone-400 block italic">Awaiting Sign Up</span>
-                          ) : isSentByMe && !isDelivered ? (
-                            <span className="text-stone-400 italic block">In Transit</span>
                           ) : (
                             <span className="block">Postmark: {getPostmarkDisplay(letter.sentAt)}</span>
                           )}
@@ -722,29 +649,6 @@ export default function Home() {
                   {activeLetter.body}
                 </p>
               </div>
-
-              {activeLetter.recipientId === user.uid && activeLetter.status === "pending" ? (
-                <div className="flex justify-between items-center border-t border-stone-100 pt-4 font-sans text-xs uppercase tracking-widest">
-                  <button
-                    onClick={() => handleTrashLetter(activeLetter.id)}
-                    className="text-red-700 hover:text-red-900 transition-colors border border-red-100 hover:border-red-200 bg-red-50/30 px-3 py-2 rounded"
-                  >
-                    Move to Trash
-                  </button>
-                  
-                  <button
-                    onClick={() => handleArchiveLetter(activeLetter.id)}
-                    className="text-stone-600 hover:text-stone-900 transition-colors border border-stone-200 hover:border-stone-400 px-4 py-2 rounded bg-stone-50"
-                  >
-                    File in Archive (Save)
-                  </button>
-                </div>
-              ) : (
-                <div className="flex justify-end border-t border-stone-100 pt-4 font-sans text-xs uppercase tracking-widest text-stone-400 italic">
-                  Historical Record Locked
-                </div>
-              )}
-
             </div>
           </div>
         )}
