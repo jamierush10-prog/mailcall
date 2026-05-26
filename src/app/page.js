@@ -151,6 +151,7 @@ export default function Home() {
           createdAt: new Date()
         });
 
+        // Envelope Harvesting Hook: Gather outstanding email-reserved invites matching this target email
         const inviteQuery = query(
           collection(db, "letters"),
           where("recipientEmail", "==", cleanEmail)
@@ -161,10 +162,11 @@ export default function Home() {
           const batch = writeBatch(db);
           inviteSnapshot.docs.forEach((inviteDoc) => {
             const docRef = doc(db, "letters", inviteDoc.id);
+            // Dynamic Shift: Reassign recipient identifier fields to the new user handle instantly
             batch.update(docRef, {
               recipientId: userCredential.user.uid,
               recipientAddress: cleanAddress,
-              status: "pending"
+              recipientEmail: "" // Wipe raw holding string so it shifts to active outbox category
             });
           });
           await batch.commit();
@@ -244,7 +246,7 @@ export default function Home() {
 
       if (isEmailFormat) {
         resolvedRecipientEmail = cleanInput;
-        resolvedRecipientAddress = cleanInput.split("@")[0] + "_invited";
+        resolvedRecipientAddress = ""; // Leave blank until harvested during profile setup
       } else {
         const q = query(collection(db, "users"), where("mailboxAddress", "==", cleanInput));
         const querySnapshot = await getDocs(q);
@@ -395,7 +397,7 @@ export default function Home() {
 
         <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12">
           
-          {/* Left Column: Post Desk Gateway System */}
+          {/* Left Column */}
           <section className="lg:col-span-4 flex flex-col items-center justify-start pt-6 space-y-4">
             <div className="w-full">
               <h2 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold border-b border-stone-200 pb-2 text-center w-full">
@@ -442,7 +444,6 @@ export default function Home() {
               </span>
             </button>
 
-            {/* Purpose & Manifesto Lever */}
             <button
               onClick={() => setIsPurposeOpen(true)}
               className="group p-4 border border-dashed border-stone-300 hover:border-stone-400 bg-transparent rounded-lg text-center flex flex-col items-center w-64 transition-all"
@@ -525,7 +526,7 @@ export default function Home() {
 
         </main>
 
-        {/* MODAL 1: THE ACTIVE MAILBOX OVERVIEW */}
+        {/* MODAL 1: Active Mailbox */}
         {isInboxOpen && (
           <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-40">
             <div className="bg-[#FDFBF7] border border-stone-300 max-w-lg w-full rounded-lg shadow-xl p-6 sm:p-8 relative max-h-[85vh] flex flex-col">
@@ -560,7 +561,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* MODAL 2: SEARCHABLE ARCHIVE DRAWER WITH DRAFTS */}
+        {/* ============================================== */}
+        {/* MODAL 2: SAVED CORRESPONDENCE LEDGER (UPDATED) */}
+        {/* ============================================== */}
         {isArchiveOpen && (
           <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-40">
             <div className="bg-[#FDFBF7] border border-stone-300 max-w-2xl w-full rounded-lg shadow-xl p-6 sm:p-8 relative max-h-[85vh] flex flex-col">
@@ -573,7 +576,7 @@ export default function Home() {
               <div className="mb-4 relative">
                 <input 
                   type="text"
-                  placeholder="Search ledger by handle, email address, or content..."
+                  placeholder="Search ledger by handle, email, or content..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-white px-4 py-2 border border-stone-200 focus:border-stone-400 rounded text-sm font-sans focus:outline-none placeholder-stone-300"
@@ -586,7 +589,8 @@ export default function Home() {
                 ) : (
                   filteredCorrespondence.map((letter) => {
                     const isDraft = letter.status === "draft";
-                    const isSentByMe = letter.senderId === user.uid && !isDraft;
+                    const isInvitePending = letter.senderId === user.uid && letter.recipientEmail && letter.status === "pending";
+                    const isSentByMe = letter.senderId === user.uid && !isDraft && !isInvitePending;
                     const isDelivered = letter.deliveryDate?.toDate() <= new Date();
                     
                     return (
@@ -597,19 +601,30 @@ export default function Home() {
                       >
                         <div className="space-y-1 font-serif">
                           <div className="flex items-center space-x-2">
+                            {/* 1. Draft Status */}
                             {isDraft && (
                               <span className="text-xs font-sans uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded font-medium">Draft Sheet</span>
                             )}
+                            {/* 2. Pending Invitation Status */}
+                            {isInvitePending && (
+                              <span className="text-xs font-sans uppercase tracking-wider text-stone-500 bg-stone-200 border border-stone-300/60 px-1.5 py-0.5 rounded font-medium">Pending Invitation</span>
+                            )}
+                            {/* 3. Standard Sent Outbox Status */}
                             {isSentByMe && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded">To Outbox</span>
                             )}
-                            {!isSentByMe && !isDraft && (
+                            {/* 4. Received Saved Mail Status */}
+                            {!isSentByMe && !isDraft && !isInvitePending && (
                               <span className="text-xs font-sans uppercase tracking-wider text-stone-500 bg-stone-200/60 px-1.5 py-0.5 rounded">From Inbox</span>
                             )}
+
+                            {/* Recipient Naming Parameter Layer */}
                             <span className="font-mono text-sm text-stone-800 font-semibold">
-                              {isSentByMe || isDraft 
-                                ? (letter.recipientEmail ? letter.recipientEmail : `@${letter.recipientAddress || "unaddressed"}`)
-                                : `@${letter.senderAddress}`
+                              {isInvitePending 
+                                ? letter.recipientEmail 
+                                : isSentByMe || isDraft 
+                                  ? `@${letter.recipientAddress || "unaddressed"}`
+                                  : `@${letter.senderAddress}`
                               }
                             </span>
                           </div>
@@ -619,10 +634,10 @@ export default function Home() {
                         <div className="text-right font-sans text-xs text-stone-400">
                           {isDraft ? (
                             <span className="text-amber-700 italic block font-serif">Click to Edit &rarr;</span>
+                          ) : isInvitePending ? (
+                            <span className="text-stone-400 block italic">Awaiting Sign Up</span>
                           ) : isSentByMe && !isDelivered ? (
-                            <span className="text-stone-400 italic block">
-                              {letter.recipientEmail ? "Invited (Pending Sign Up)" : "In Transit"}
-                            </span>
+                            <span className="text-stone-400 italic block">In Transit</span>
                           ) : (
                             <span className="block">Postmark: {letter.deliveryDate?.toDate().toLocaleDateString()}</span>
                           )}
@@ -727,7 +742,7 @@ export default function Home() {
         {/* MODAL 5: SHAREABLE INVITATION SNIPPET DIALOG */}
         {inviteModalData && (
           <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="bg-[#FDFBF7] border border-stone-300 max-w-lg w-full rounded-lg shadow-2xl p-6 sm:p-8 relative font-serif">
+            <div className="bg-[#FDFBF7] border border-stone-300 max-w-lg w-full rounded-lg shadow-xl p-6 sm:p-8 relative font-serif">
               <div className="border-b border-stone-200 pb-3 mb-4 flex justify-between items-center">
                 <h3 className="text-base font-sans uppercase tracking-widest text-stone-600 font-semibold">Share Invite Loop</h3>
                 <button onClick={() => setInviteModalData(null)} className="font-sans text-xs uppercase text-stone-400 hover:text-stone-800 tracking-wider">Close</button>
@@ -750,64 +765,30 @@ export default function Home() {
           </div>
         )}
 
-        {/* ============================================== */}
         {/* MODAL 6: MANIFESTO & PURPOSE EXPLANATION */}
-        {/* ============================================== */}
         {isPurposeOpen && (
           <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
             <div className="bg-white border border-stone-300 max-w-xl w-full rounded shadow-2xl p-6 sm:p-8 relative flex flex-col max-h-[85vh]">
-              
               <div className="flex justify-between items-center border-b border-stone-200 pb-3 mb-5">
-                <h3 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold">
-                  About Mailcall
-                </h3>
-                <button 
-                  onClick={() => setIsPurposeOpen(false)}
-                  className="font-sans text-xs uppercase text-stone-400 hover:text-stone-800 tracking-wider transition-colors"
-                >
-                  Close
-                </button>
+                <h3 className="text-xs uppercase tracking-widest text-stone-400 font-sans font-semibold">About Mailcall</h3>
+                <button onClick={() => setIsPurposeOpen(false)} className="font-sans text-xs uppercase text-stone-400 hover:text-stone-800 tracking-wider transition-colors">Close</button>
               </div>
-
               <div className="overflow-y-auto flex-1 pr-2 space-y-5 text-sm text-stone-700 leading-relaxed font-serif">
                 <div>
-                  <h4 className="text-stone-900 font-sans text-xs uppercase tracking-wider font-bold mb-1">
-                    The Purpose
-                  </h4>
-                  <p>
-                    Mailcall is an intentional experiment designed to reject the exhausting pace of modern digital instant messaging. In a world saturated with immediate notifications, typing boxes, and constant availability, our minds have lost the capacity for deep, contemplative communication. This application acts as a private harbor—restoring the slow, deliberate rhythm of analog letter-writing back to your digital desk.
-                  </p>
+                  <h4 className="text-stone-900 font-sans text-xs uppercase tracking-wider font-bold mb-1">The Purpose</h4>
+                  <p>Mailcall is an intentional experiment designed to reject the exhausting pace of modern digital instant messaging. In a world saturated with immediate notifications, typing boxes, and constant availability, our minds have lost the capacity for deep, contemplative communication. This application acts as a private harbor—restoring the slow, deliberate rhythm of analog letter-writing back to your digital desk.</p>
                 </div>
-
                 <div>
-                  <h4 className="text-stone-900 font-sans text-xs uppercase tracking-wider font-bold mb-1">
-                    How It Works
-                  </h4>
+                  <h4 className="text-stone-900 font-sans text-xs uppercase tracking-wider font-bold mb-1">How It Works</h4>
                   <ul className="list-disc pl-5 space-y-2 text-stone-600 text-xs">
-                    <li>
-                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">The Two-Cycle Rule:</strong>
-                      Every letter you mail undergoes a mandatory transit cycle. It does not drop into the recipient's mailbox instantly. Instead, it travels through the system and is held in transit for exactly two post cycles.
-                    </li>
-                    <li>
-                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">Fixed Mail Call:</strong>
-                      Delivery runs strictly **Monday through Saturday at exactly Noon Central Time**. If a letter’s transit period wraps up on a Sunday, it will wait securely on the sorting shelf until the official Monday mail call.
-                    </li>
-                    <li>
-                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">The Quiet Mailbox:</strong>
-                      To respect your peace, there are no unread notification counts, flashing numbers, or alert popups on your main dashboard desk. To see if the post has arrived, you must intentionally open your Post Box door to look inside.
-                    </li>
-                    <li>
-                      <strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">Immutable Inboxes:</strong>
-                      Letters wait inside your mailbox until you explicitly sit down to read them. Once unsealed, you have a conscious choice: permanently move the paper to the **Trash**, or file it safely away in your permanent **Saved Correspondence** ledger.
-                    </li>
+                    <li><strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">The Two-Cycle Rule:</strong> Every letter you mail undergoes a mandatory transit cycle. It does not drop into the recipient's mailbox instantly. Instead, it travels through the system and is held in transit for exactly two post cycles.</li>
+                    <li><strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">Fixed Mail Call:</strong> Delivery runs strictly Monday through Saturday at exactly Noon Central Time. If a letter’s transit period wraps up on a Sunday, it will wait securely on the sorting shelf until the official Monday mail call.</li>
+                    <li><strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">The Quiet Mailbox:</strong> To respect your peace, there are no unread notification counts, flashing numbers, or alert popups on your main dashboard desk. To see if the post has arrived, you must intentionally open your Post Box door to look inside.</li>
+                    <li><strong className="text-stone-800 font-sans uppercase tracking-wide text-[10px] block mt-0.5">Immutable Inboxes:</strong> Letters wait inside your mailbox until you explicitly sit down to read them. Once unsealed, you have a conscious choice: permanently move the paper to the Trash, or file it safely away in your permanent Saved Correspondence ledger.</li>
                   </ul>
                 </div>
-
-                <p className="text-xs text-stone-400 italic pt-2 border-t border-stone-100 font-sans text-center">
-                  Take your time. Write with intention.
-                </p>
+                <p className="text-xs text-stone-400 italic pt-2 border-t border-stone-100 font-sans text-center">Take your time. Write with intention.</p>
               </div>
-
             </div>
           </div>
         )}
