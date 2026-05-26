@@ -71,16 +71,39 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // --- COMPREHENSIVE STREAM DATA DESK ---
+  // --- COMPREHENSIVE STREAM DATA DESK WITH AUTO-HARVEST RETROFIX ---
   useEffect(() => {
     if (!user) return;
 
     const myHandle = (user.mailboxAddress || "").toLowerCase().trim();
+    const myEmail = (user.email || auth.currentUser?.email || "").toLowerCase().trim();
     const rawLettersQuery = query(collection(db, "letters"));
 
     const unsubscribe = onSnapshot(rawLettersQuery, (snapshot) => {
       const now = new Date();
       const rawDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // RETROACTIVE HARVEST CHECK: If any letter matches my current email, automatically clean it up
+      const unharvestedInvites = rawDocs.filter(letter => 
+        letter.recipientEmail && 
+        letter.recipientEmail.toLowerCase().trim() === myEmail
+      );
+
+      if (unharvestedInvites.length > 0) {
+        const fixInvites = async () => {
+          const batch = writeBatch(db);
+          unharvestedInvites.forEach(invite => {
+            const docRef = doc(db, "letters", invite.id);
+            batch.update(docRef, {
+              recipientId: user.uid,
+              recipientAddress: myHandle,
+              recipientEmail: "" // Wiping this updates the UI view instantly
+            });
+          });
+          await batch.commit();
+        };
+        fixInvites().catch(err => console.error("Retroactive harvest failed:", err));
+      }
 
       const parseTime = (field) => {
         if (!field) return 0;
@@ -118,7 +141,6 @@ export default function Home() {
           const amISender = letter.senderId === user.uid || sndAddress === myHandle;
           const amIRecipient = letter.recipientId === user.uid || recAddress === myHandle;
 
-          // Pending invitation criteria: letter must explicitly still carry a placeholder recipient email string
           const isInvitePending = amISender && letter.recipientEmail && letter.status === "pending";
           const isSentByMe = amISender && !isDraft && !isInvitePending;
           
@@ -131,7 +153,7 @@ export default function Home() {
 
       setAllCorrespondence(ledgerLogs);
     }, (err) => {
-      console.error("Database loop sync broken:", err);
+      console.error("Database seed stream broken:", err);
     });
 
     const fetchDirectory = async () => {
@@ -158,7 +180,6 @@ export default function Home() {
     );
   }
 
-  // --- ACCOUNT SETUP & DYNAMIC ENVELOPE HARVESTER ROUTINE ---
   const handleAuth = async (e) => {
     e.preventDefault();
     setError("");
@@ -185,29 +206,6 @@ export default function Home() {
           mailboxAddress: cleanAddress,
           createdAt: new Date()
         });
-
-        // HARVEST LOOP: Scan for staged invitation entries matching this fresh user email address
-        const lettersRef = collection(db, "letters");
-        const inviteSnapshot = await getDocs(lettersRef);
-        
-        const matchingInvites = inviteSnapshot.docs.filter(d => {
-          const data = d.data();
-          return data.recipientEmail && data.recipientEmail.toLowerCase().trim() === cleanEmail;
-        });
-        
-        if (matchingInvites.length > 0) {
-          const batch = writeBatch(db);
-          matchingInvites.forEach((inviteDoc) => {
-            const docRef = doc(db, "letters", inviteDoc.id);
-            // DYNAMIC SHIFT: Upgrade the credentials instantly to tie into the new platform profile
-            batch.update(docRef, {
-              recipientId: userCredential.user.uid,
-              recipientAddress: cleanAddress,
-              recipientEmail: "" // Wiping this drops it out of 'Pending Invitation' status layout maps instantly!
-            });
-          });
-          await batch.commit();
-        }
       } else {
         await signInWithEmailAndPassword(auth, cleanEmail, password);
       }
